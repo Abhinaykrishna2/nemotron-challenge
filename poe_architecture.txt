@@ -1,0 +1,85 @@
+Product of Experts (PoE) Internals
+=================================
+
+Core Concept
+------------
+PoE combines multiple "expert" probability distributions by multiplying them and normalizing. For candidate solutions s given input p, the ensemble posterior is:
+
+P(s|p) = [1/Z] * ∏_j=1^m [P̂_j(s|p)]^(1/m)
+
+Where:
+- P̂_j(s|p): Approximate posterior from expert/view j (e.g., LLM logprobs on augmented input)
+- m: Number of experts/views (typically 16)
+- Z: Normalization constant over candidate set S_p
+- Exponent 1/m: Geometric averaging (arithmetic in log space)
+
+Log-domain computation (numerically stable):
+log P(s|p) = (1/m) * Σ_j log P̂_j(s|p) - log Z
+
+Select: s* = argmax_s P(s|p)
+
+Key Mathematical Property
+-------------------------
+KL(P ∥ P̂) = (1/m) * Σ_j KL(P ∥ P̂_j) + log Z
+- log Z ≤ 0 (equality when experts agree perfectly)
+- Multi-view consensus prunes inconsistent candidates
+- Robust to individual expert errors/outliers
+
+LLM Integration (Dual Role)
+---------------------------
+1. Generator: Autoregressive P(s|p) → token-by-token grid/program synthesis
+2. Scorer: Fixed s → extract token log-likelihoods P̂(s|p)
+
+Tokenization (ARC example, transferable):
+- Grids → sequences (cell-by-cell, 64-token vocab: 0-9 colors + special tokens)
+- Augmentations Φ(p): D8 rotations/reflections, color permutations, example order shuffles
+
+Workflow (Generalizable Algorithm)
+----------------------------------
+1. Tokenize input p → base sequence
+2. Generate candidate pool C_p via search:
+   - DFS/BFS with pruning (cumulative prob > threshold T)
+   - Depth limit to control compute
+   
+3. For each s ∈ C_p:
+   a. Generate m augmented views: {Φ_j(p)} for j=1..m
+   b. For each view j: LLM(s | Φ_j(p)) → log P̂_j(s|Φ_j(p))
+   c. Product score: Π_j P̂_j(s|Φ_j(p))^(1/m)
+   
+4. Ranking: Sort C_p by product scores → top-k solutions
+5. Evaluation: Test top predictions on held-out data
+
+Transferable Design Choices
+---------------------------
+- Augmentations: Domain-specific invariances (image: flips/crops; text: paraphrasing; graphs: relabeling)
+- Candidates: DFS/MCTS/Beam search on structured space
+- Experts: Same LLM across views, or mixture (open weights work)
+- Compute: O(m * |C| * L) where L=sequence length; scales linearly
+
+Empirical Scaling
+-----------------
+- m=1: Single LLM baseline (~20-30% ARC)
+- m=8-16: 2.5x score boost (71.6% public eval)
+- Low temp (0-0.1): Deterministic scoring maximizes consensus
+- Cost: ~$0.02/task at scale (Qwen-32B/Llama scale)
+
+Implementation Pseudocode
+-------------------------
+def poe_score(model, p, candidates, m=16):
+    scores = []
+    for s in candidates:
+        logprobs = 0
+        for _ in range(m):
+            aug_p = augment(p)  # domain-specific
+            lp = model.logprob(s, aug_p)  # token logprobs
+            logprobs += lp.mean()
+        score = exp(logprobs / m)  # geometric mean
+        scores.append(score)
+    return argmax(scores)
+
+Advantages for Transfer
+-----------------------
+- No fine-tuning required (test-time only)
+- Model-agnostic (works with any autoregressive LLM)
+- Handles distribution shift via multi-view consensus
+- Strong theoretical grounding (PoE → tighter KL bounds)

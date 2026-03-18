@@ -1,0 +1,43 @@
+# NVIDIA Nemotron Model Reasoning Challenge - Details for LLM Agent
+
+## 1. Competition Overview
+* **Goal**: Advance reasoning techniques using NVIDIA Nemotron open models on a novel benchmark focused on structured reasoning.
+* **Primary Objective**: Improve reasoning accuracy of the base model via methods like prompting, data pipelines, synthetic data, reinforcement learning, or lightweight fine-tuning (LoRA).
+* **Target Model**: NVIDIA Nemotron-3-Nano-30B (Strictly this base model).
+
+## 2. Dataset Structure
+* **train.csv**:
+    * `id`: Unique identifier for each puzzle.
+    * `prompt`: Description of the puzzle, input-output examples, and the specific instance to solve.
+    * `answer`: Ground truth solution.
+* **test.csv**:
+    * `id`: Unique identifier.
+    * `prompt`: Puzzle description (to be solved).
+* **Hidden Test Set**: The actual scoring occurs on a private test set of several hundred problems.
+
+## 3. Submission Requirements
+* **Format**: A `submission.zip` file containing ONLY a compatible LoRA adapter and its corresponding `adapter_config.json`. 
+* **LoRA Constraint**: The LoRA adapter MUST have a maximum rank of 32.
+* **Documentation**: Public Kaggle notebooks and solution write-ups are STRICTLY REQUIRED to be eligible for any prizes.
+
+## 4. Evaluation and Inference
+* **Inference Engine**: vLLM (Organizers will load your adapter onto the base model).
+* **Metric**: Accuracy. Graded as correct if it matches the ground truth either exactly as a string or within a relative numerical tolerance.
+* **Output Format**: The generated response MUST contain the final answer enclosed in a LaTeX box command (e.g., $\boxed{42}$). 
+* **Answer Extraction**: The evaluator prioritizes the boxed content, falling back to heuristic patterns or the last numeric value found.
+* **Strict Generation Parameters**:
+    * `temperature`: 0.0 (Greedy decoding)
+    * `max_tokens`: 7680
+    * `top_p`: 1.0
+    * `max_num_seqs`: 64
+    * `gpu_memory_utilization`: 0.85
+    * `max_model_len`: 8192
+
+## 5. Technical Constraints
+* **Submissions**: The evaluation system strictly takes the `submission.zip` file upload. You do not submit an inference notebook for the scoring pipeline.
+* **Frameworks**: Any training framework (Unsloth, Axolotl, Hugging Face, etc.) is permitted as long as the output is a compatible adapter.
+
+## 6. Key Strategies for Success
+* **Prompt Engineering & Data Curation**: Refining how logic is presented to the model during training.
+* **Fine-tuning**: Creating high-quality LoRA adapters using provided or external reasoning data.
+* **Chain-of-Thought (CoT)**: Training the model to consistently output step-by-step reasoning under greedy decoding constraints before providing the final boxed answer.
