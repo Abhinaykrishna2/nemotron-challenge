@@ -25,7 +25,7 @@ import torch
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
-MODEL_ID    = os.environ.get("MODEL_ID", "nvidia/Llama-3.1-Nemotron-Nano-8B-v1")
+MODEL_ID    = os.environ.get("MODEL_ID", "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16")
 OUTPUT_DIR  = Path("outputs/lora_adapter")
 SFT_FILE    = Path("data/finetune_sft.jsonl")
 
@@ -163,7 +163,7 @@ adapter_dir = OUTPUT_DIR / "final_adapter"
 adapter_dir.mkdir(exist_ok=True)
 
 model.save_pretrained(str(adapter_dir))   # saves adapter_model.safetensors + adapter_config.json
-tokenizer.save_pretrained(str(adapter_dir))
+# NOTE: do NOT save tokenizer — submission must contain ONLY adapter files
 
 print(f"\nAdapter saved to {adapter_dir}")
 print("Files:")
@@ -172,14 +172,16 @@ for f in sorted(adapter_dir.iterdir()):
     print(f"  {f.name:<40} {size:.1f} MB")
 
 # ---------------------------------------------------------------------------
-# Package for submission
+# Package for submission — ONLY adapter_model.safetensors + adapter_config.json
 # ---------------------------------------------------------------------------
 import zipfile
+
+ALLOWED_FILES = {"adapter_model.safetensors", "adapter_config.json"}
 
 submission_zip = Path("submission.zip")
 with zipfile.ZipFile(submission_zip, "w", zipfile.ZIP_DEFLATED) as zf:
     for f in adapter_dir.iterdir():
-        if f.suffix in {".safetensors", ".json"}:
+        if f.name in ALLOWED_FILES:
             zf.write(f, arcname=f.name)
 
 print(f"\nsubmission.zip created ({submission_zip.stat().st_size/1024/1024:.1f} MB)")

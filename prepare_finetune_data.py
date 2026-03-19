@@ -40,6 +40,7 @@ RL_FILE    = Path("data/finetune_rl.jsonl")
 # 7000 tokens * 4 chars/token = 28 000 chars.  We use 24 000 to be conservative.
 TRAIN_CHAR_BUDGET = 24_000   # ~6000 tokens for reasoning body
 CONCLUSION_TEMPLATE = "\n\n### Final Answer\n$\\boxed{{{answer}}}$"
+NUMERIC_REL_TOL = 0.01
 
 
 # ---------------------------------------------------------------------------
@@ -47,8 +48,24 @@ CONCLUSION_TEMPLATE = "\n\n### Final Answer\n$\\boxed{{{answer}}}$"
 # ---------------------------------------------------------------------------
 
 def extract_boxed(text: str) -> str | None:
-    m = re.search(r'\\boxed\{([^}]*)\}', text)
-    return m.group(1).strip() if m else None
+    matches = re.findall(r'\\boxed\{([^}]*)\}', text)
+    return matches[-1].strip() if matches else None
+
+
+def answers_match(predicted: str | None, correct: str | None) -> bool:
+    if not predicted or not correct:
+        return False
+    if predicted == correct:
+        return True
+    try:
+        predicted_num = float(predicted)
+        correct_num = float(correct)
+    except Exception:
+        return False
+
+    if correct_num == 0:
+        return abs(predicted_num - correct_num) <= 1e-12
+    return abs(predicted_num - correct_num) / abs(correct_num) <= NUMERIC_REL_TOL
 
 
 def replace_last_boxed(text: str, correct: str) -> tuple[str, bool]:
@@ -101,7 +118,7 @@ def main():
     total = len(records)
 
     # Counters
-    exact_orig      = 0   # already correct before any fix
+    metric_correct_orig = 0   # already correct under challenge metric before any fix
     boxed_replaced  = 0   # wrong answer corrected
     trimmed_capped  = 0   # truncated trace → trim-and-cap applied
     no_boxed_fixed  = 0   # force_finish failed → appended GT anyway
@@ -114,22 +131,26 @@ def main():
         reasoning     = r["tot_reasoning"]
         finish_reason = r.get("finish_reason", "stop")
         predicted     = extract_boxed(reasoning) or ""
-        is_correct    = (predicted == gt)
+        is_correct    = answers_match(predicted, gt)
         user_msg      = r["messages"][0]["content"]
 
         if is_correct:
-            exact_orig += 1
+            metric_correct_orig += 1
 
         # ------------------------------------------------------------------
         # Build the corrected assistant message
         # ------------------------------------------------------------------
-        if finish_reason == "length":
-            # Trace was cut off — trim to budget and append correct answer
+        approx_tokens = len(reasoning) // 4
+
+        needs_trim = finish_reason == "length" or approx_tokens > 7680
+
+        if needs_trim:
+            # Trace was cut off or exceeds inference budget — trim and append correct answer
             final_reasoning = trim_and_cap(reasoning, gt)
             trimmed_capped += 1
             was_changed = True
         else:
-            # Trace completed — fix the boxed answer if wrong
+            # Trace completed within budget — fix the boxed answer if wrong
             final_reasoning, was_changed = replace_last_boxed(reasoning, gt)
             if was_changed:
                 if predicted:
@@ -153,7 +174,7 @@ def main():
             "answer":           gt,
             "was_corrected":    was_changed,
             "originally_correct": is_correct,
-            "trim_applied":     finish_reason == "length",
+            "trim_applied":     needs_trim,
             "approx_tokens":    len(final_reasoning) // 4,
         }) + "\n")
 
@@ -178,7 +199,7 @@ def main():
     # Report
     # ------------------------------------------------------------------
     print(f"Input records       : {total}")
-    print(f"Already correct     : {exact_orig}  ({exact_orig/total*100:.1f}%)")
+    print(f"Already correct     : {metric_correct_orig}  ({metric_correct_orig/total*100:.1f}%)")
     print(f"Boxed answer fixed  : {boxed_replaced}")
     print(f"Trim-and-cap applied: {trimmed_capped}  (truncated traces)")
     print(f"No-boxed appended   : {no_boxed_fixed}")
@@ -203,9 +224,9 @@ def main():
     cat_total   = Counter(r["category"] for r in records)
     cat_correct = Counter(
         r["category"] for r in records
-        if (extract_boxed(r["tot_reasoning"]) or "") == r["answer"].strip()
+        if answers_match(extract_boxed(r["tot_reasoning"]) or "", r["answer"].strip())
     )
-    print("Category accuracy (original ToT, before correction):")
+    print("Category accuracy (original ToT, before correction, challenge metric):")
     for cat in sorted(cat_total):
         n, c = cat_total[cat], cat_correct[cat]
         print(f"  {cat:<22} {c:>4}/{n:<4}  ({c/n*100:5.1f}%)")
